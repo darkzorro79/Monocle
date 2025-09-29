@@ -1,4 +1,5 @@
 import argparse
+import os
 import re
 import tempfile
 from pathlib import Path
@@ -12,26 +13,55 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from Monocle.GhidraBridge.ghidra_bridge import GhidraBridge
 
 class Monocle:
-    def _load_model(self, model_name, device):
+    def _load_model(self, model_name, device, hf_token=None):
         """
         Load the pre-trained language model and tokenizer.
 
         Args:
             model_name (str): Name of the pre-trained model.
             device (str): Device to load the model onto.
+            hf_token (str, optional): HuggingFace authentication token.
 
         Returns:
             model (transformers.PreTrainedModel): Loaded language model.
             tokenizer (transformers.PreTrainedTokenizer): Loaded tokenizer.
         """
-        quantization_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_compute_dtype=torch.float16,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
+        
+        if device == "cuda":
+            # Use 4-bit quantization for GPU
+            quantization_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True,
+            )
+            
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name, 
+                quantization_config=quantization_config,
+                device_map="auto",
+                token=hf_token,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True
+            )
+        else:
+            # CPU mode: load with lower precision to save memory
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                torch_dtype=torch.float32,
+                device_map=None,
+                token=hf_token,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True
+            )
+            model = model.to(device)
+        
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_name, 
+            padding_side="left",
+            token=hf_token
         )
-        model = AutoModelForCausalLM.from_pretrained("mistralai/Mistral-7B-Instruct-v0.2", quantization_config=quantization_config)
-        tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
+        
         return model, tokenizer
     
     def _get_code_from_decom_file(self, path_to_file):
@@ -145,6 +175,14 @@ class Monocle:
         parser = argparse.ArgumentParser(description="Local Language Model (LLM) - Explain code snippets")
         parser.add_argument("--binary", "-b", required=True, help="The Binary to search")
         parser.add_argument("--find", "-f", required=True, help="The component to find")
+        parser.add_argument("--token", "-t", help="HuggingFace authentication token (or set HF_TOKEN env variable)")
+        parser.add_argument("--model", "-m", 
+                          default="mistralai/Mistral-7B-Instruct-v0.2",
+                          help="HuggingFace model to use (default: mistralai/Mistral-7B-Instruct-v0.2)")
+        parser.add_argument("--language", "-l",
+                          default="English",
+                          choices=["English", "Russian"],
+                          help="Output language (default: English)")
         return parser.parse_args()
     
     def _remove_inst_tags(self, text):
@@ -167,9 +205,57 @@ class Monocle:
         """
         args = self._get_args()
         console = Console()
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        model_name = "mistralai/Mistral-7B-Instruct-v0.1"
-        model, tokenizer = self._load_model(model_name, device)
+        
+        # Check CUDA compatibility
+        device = "cpu"  # Default to CPU
+        if torch.cuda.is_available():
+            try:
+                # Test if GPU actually works
+                test_tensor = torch.rand(2, 2).cuda()
+                _ = test_tensor * 2
+                device = "cuda"
+                console.print(f"[green]✓[/green] Using GPU: {torch.cuda.get_device_name(0)}")
+            except RuntimeError as e:
+                console.print(f"[yellow]⚠ Warning:[/yellow] GPU detected but incompatible with PyTorch")
+                console.print(f"[yellow]  {torch.cuda.get_device_name(0)} (compute capability {torch.cuda.get_device_capability(0)})[/yellow]")
+                console.print(f"[yellow]  Falling back to CPU mode (will be slower)[/yellow]")
+                console.print(f"[yellow]  For GPU support, wait for PyTorch to support your GPU architecture[/yellow]\n")
+        else:
+            console.print("[yellow]⚠ No CUDA device found, using CPU (will be slower)[/yellow]\n")
+        
+        model_name = args.model
+        output_language = args.language
+        console.print(f"[cyan]Using model:[/cyan] {model_name}")
+        console.print(f"[cyan]Output language:[/cyan] {output_language}\n")
+        
+        # Get HuggingFace token from args or environment variable
+        hf_token = args.token or os.environ.get("HF_TOKEN")
+        
+        if not hf_token:
+            console.print("[bold red]Error:[/bold red] HuggingFace token required!")
+            console.print("Please either:")
+            console.print("  1. Set HF_TOKEN environment variable")
+            console.print("  2. Use --token parameter")
+            console.print("\nGet your token at: https://huggingface.co/settings/tokens")
+            console.print(f"Request access to model at: https://huggingface.co/{model_name}")
+            return
+        
+        # Check for Ghidra before starting (to avoid confusion with spinner)
+        console.print("[cyan]Checking for Ghidra...[/cyan]")
+        import shutil
+        if shutil.which("analyzeHeadless.bat") is None:
+            console.print("[yellow]⚠ Ghidra not found in PATH[/yellow]")
+            console.print("Please provide the full path to analyzeHeadless.bat")
+            console.print("Example: C:\\ghidra_11.2_PUBLIC\\support\\analyzeHeadless.bat")
+            console.print("\nOr download Ghidra from: https://ghidra-sre.org/")
+            console.print("And add it to PATH, then restart.\n")
+        else:
+            console.print("[green]✓[/green] Ghidra found\n")
+        
+        if device == "cpu":
+            console.print("[yellow]Loading model in CPU mode, this may take several minutes and requires 32GB+ RAM...[/yellow]")
+        
+        model, tokenizer = self._load_model(model_name, device, hf_token)
         console.clear()
         
         list_of_decom_files = []
@@ -189,31 +275,56 @@ class Monocle:
                     function_name = function["function_name"]
                     code = function["code"]
 
-                    question = f"You have been asked to review C decompiled code from Ghidra and identify the following '{args.find}'. Return a score between 0 and 10, where 0 means there is no indication, 1 to 2 means there is something related, 3 to 4 means there is a degree of evidence, 5 to 6 means that there is more evidence, and 7 to 10 means there is significant evidence. You should be certain that the code meets these scores. Format your response as a single number score, followed my a new line, followed by your explanation. \n Code: \n {code.strip()}"
+                    language_instruction = ""
+                    if output_language == "Russian":
+                        language_instruction = " Answer in Russian language (Отвечай на русском языке)."
+                    
+                    question = f"You have been asked to review C decompiled code from Ghidra and identify the following '{args.find}'. Return a score between 0 and 10, where 0 means there is no indication, 1 to 2 means there is something related, 3 to 4 means there is a degree of evidence, 5 to 6 means that there is more evidence, and 7 to 10 means there is significant evidence. You should be certain that the code meets these scores. Format your response as a single number score, followed my a new line, followed by your explanation.{language_instruction} \n Code: \n {code.strip()}"
                     
                     result = self._generate_dialogue_response(model, tokenizer, device, [{"role": "user", "content": question}])
                     result = self._remove_inst_tags(result)
 
                     ans_number, *explanation = result.split("\n")
-                    explanation = "".join(explanation)
+                    explanation = "".join(explanation).strip()
 
-                    if int(ans_number) == 0:
+                    # Extract score number (handle formats like "3:", "Score: 3", "3", etc.)
+                    score_match = re.search(r'\d+', ans_number)
+                    if score_match:
+                        score = int(score_match.group())
+                        # Clamp score to 0-10 range
+                        score = max(0, min(10, score))
+                    else:
+                        # If no number found, default to 0
+                        score = 0
+                        explanation = f"[Parsing error: {ans_number}] {explanation}"
+
+                    if score == 0:
                         explanation = ""
 
-                    rows.append(self._generate_table_row(binary_name=binary_name, function_name=function_name, score=ans_number, explanation=explanation))
+                    rows.append(self._generate_table_row(binary_name=binary_name, function_name=function_name, score=score, explanation=explanation))
 
                     for row_dict in rows:
                         words_to_replace = ["[green]", "[orange1]", "[red]"]
-                        score_value = row_dict["score"]
+                        score_value = str(row_dict["score"])
                         for word in words_to_replace:
                             score_value = score_value.replace(word, "")
                         row_dict["score"] = score_value
 
-                    rows.sort(key=lambda x: int(x['score']), reverse=True)
+                    # Sort by score (handle both string and int scores)
+                    def get_score_for_sort(row):
+                        try:
+                            score_str = str(row['score']).replace("[green]", "").replace("[orange1]", "").replace("[red]", "")
+                            return int(re.search(r'\d+', score_str).group()) if re.search(r'\d+', score_str) else 0
+                        except:
+                            return 0
                     
-                    max_score = int(max(rows, key=lambda x: int(x['score']))['score'])
+                    rows.sort(key=get_score_for_sort, reverse=True)
+                    
+                    # Get max score safely
+                    max_score = max([get_score_for_sort(row) for row in rows]) if rows else 0
+                    
                     for row in rows:
-                        score = int(row['score'])
+                        score = get_score_for_sort(row)
                         if score >= max_score * 0.75:
                             row['score'] = f"[green]{score}"
                         elif score >= max_score * 0.5:

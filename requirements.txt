@@ -1,13 +1,19 @@
+# Core dependencies
 argparse
 rich
 setuptools
-huggingface_hub
 numpy
-accelerate
 pyyaml
-torchvision -index-url https://download.pytorch.org/whl/cu118                                                                            
-torchaudio -index-url https://download.pytorch.org/whl/cu118                                                                            
-bitsandbytes>=0.39.0
+
+# HuggingFace backend (default)
+huggingface_hub
 accelerate>=0.16.0,<1
 transformers[torch]>=4.28.1
 torch>=1.13.1
+bitsandbytes>=0.39.0
+
+# Ollama backend (optional, for better GPU support)
+ollama>=0.1.0
+
+# Note: For CUDA support, install PyTorch with CUDA:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118

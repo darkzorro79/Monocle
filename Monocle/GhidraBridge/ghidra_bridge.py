@@ -111,16 +111,22 @@ save_all_functions_to_files()
             pass#print(f"{binary_name} found at: {headless}")
         else:
             # Binary not found, prompt user to provide the path
-            user_provided_path = input(f"{binary_name} not found on the PATH. Please provide the full path: ")
+            print("\n" + "="*60)
+            print(f"⚠ {binary_name} not found on the PATH")
+            print("="*60)
+            print("\nPlease enter the FULL path to analyzeHeadless.bat:")
+            print("Example: C:\\ghidra_11.2_PUBLIC\\support\\analyzeHeadless.bat")
+            print("\n(Or press Ctrl+C to cancel)")
+            print("-"*60)
+            user_provided_path = input("Path: ").strip('"').strip("'")
 
             # Verify if the provided path is valid
-            if shutil.which(user_provided_path) is not None:
+            if shutil.which(user_provided_path) is not None or Path(user_provided_path).exists():
                 headless = user_provided_path
-                print(f"{binary_name} found at: {headless}")
-
+                print(f"✓ {binary_name} found at: {headless}\n")
                 headless = user_provided_path
             else:
-                raise Exception(f"Error: {binary_name} not found at the provided path.")
+                raise Exception(f"Error: {binary_name} not found at the provided path: {user_provided_path}")
 
         with tempfile.TemporaryDirectory() as ghidra_project_dir:
             # Construct Ghidra headless command

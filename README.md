@@ -15,9 +15,12 @@
 </div>
 
 Monocle is tooling backed by a large language model for performing natural language searches against compiled target binaries. Monocle can be provided with a binary and a search criteria (e.g., authentication code, vulnerable code, password strings, and more), and it will decompile the binary and use its in-built LLM to identify and score areas of the code that meet the criteria. 
+
 * **🔬 Binary Search:** Without any prior knowledge, Monocle will support in answering binary analysis questions related to the target.
 * **🤖 Natural Language and Open-Ended Questions:** As Monocle is backed by an LLM queries passed to it are written in plain text.
 * **🛠️ Ghidra Enabled:** Monocle uses Ghidra headless to enable decompilation of compiled binaries!
+* **🚀 Ollama Support:** NEW! Use Ollama for GPU acceleration on modern hardware (RTX 5090, RTX 4090, etc.)
+* **🌍 Multi-Language:** Support for English and Russian output
 
 # ⚙️ Setup
 
@@ -43,8 +46,19 @@ pip install -r requirements.txt
 Monocle can then be installed using the `./setup.py` script as below:
 
 ```
-python -m pip insatll .
+python -m pip install .
 ```
+
+### Alternative: Ollama Setup (Recommended for RTX 5090 and modern GPUs)
+
+For better GPU support, especially on newer GPUs like RTX 5090, you can use the Ollama backend:
+
+1. Install Ollama: https://ollama.com/download
+2. Pull a model: `ollama pull qwen2.5-coder:14b`
+3. Start Ollama server: `ollama serve`
+4. Use `monocle-ollama` instead of `monocle`
+
+See `OLLAMA_GUIDE.md` for detailed instructions.
 
 ## Running
 
@@ -53,14 +67,26 @@ To utilize Monocle, follow the instructions below:
 ### Natural Language Search
 Execute Monocle with the appropriate parameters to conduct binary search tasks.
 
-**Windows**
+**Windows (HuggingFace backend)**
 ```bash
-monocle.exe --binary <path-to-binary> --find <component-to-find>
+monocle.exe --binary <path-to-binary> --find <component-to-find> --token <hf-token>
 ```
-**Unix**
+
+**Unix (HuggingFace backend)**
+```bash
+monocle --binary <path-to-binary> --find <component-to-find> --token <hf-token>
 ```
-monocle --binary <path-to-binary> --find <component-to-find>
+
+**With Ollama (Recommended for GPU acceleration)**
+```bash
+monocle-ollama --binary <path-to-binary> --find <component-to-find> --language Russian
 ```
+
+#### Additional Parameters
+- `--model` / `-m`: Choose a different model
+- `--language` / `-l`: Output language (English/Russian)
+- `--token` / `-t`: HuggingFace authentication token
+- `--ollama-host`: Ollama server address (for monocle-ollama)
 ### Output
 As Monocle processes the functions present in the provided binary, it keeps a live tracker, sorted by the highest score, of all analyzed functions, their score between 0 and 10 (where 0 means the function does not meet the search criteria and 10 means it does), alongside an explanation of why the score was awarded. Scores of 0 do not have their explanation provided.
 
@@ -91,13 +117,25 @@ python.exe /Monocle/monocle.py --binary "..\linux-static-binaries-master\linux-s
   </a>
 </p>
 
-# 🤖 Mistral-7B-Instruct-v0.2
-Behind the scenes Monocle uses the ```Mistral-7B-Instruct-v0.2``` model from The Mistral AI Team - see [here](https://arxiv.org/abs/2310.06825). The Mistral-7B-Instruct-v0.2 Large Language Model (LLM) is an instruct fine-tuned version of the Mistral-7B-v0.2. More can be found on the model [here!](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.2).
+# 🤖 Models
+
+## Default: Mistral-7B-Instruct-v0.2
+By default, Monocle uses the ```Mistral-7B-Instruct-v0.2``` model from The Mistral AI Team - see [here](https://arxiv.org/abs/2310.06825). The Mistral-7B-Instruct-v0.2 Large Language Model (LLM) is an instruct fine-tuned version of the Mistral-7B-v0.2. More can be found on the model [here!](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.2).
 - 7.24B params
 - Tensor type: BF16
 - 32k context window (vs 8k context in v0.1)
 - Rope-theta = 1e6
 - No Sliding-Window Attention
+
+## Alternative Models
+You can use any instruct-tuned model via the `--model` parameter:
+
+**Recommended for code analysis:**
+- `qwen2.5-coder:14b` / `qwen2.5-coder:32b` (Ollama) - Specialized for code
+- `Qwen/Qwen2.5-Coder-7B-Instruct` (HuggingFace) - Excellent code understanding
+- `deepseek-ai/deepseek-coder-6.7b-instruct` (HuggingFace) - Good for vulnerabilities
+
+See `МОДЕЛИ_И_ИСПОЛЬЗОВАНИЕ.md` (Russian) or `OLLAMA_GUIDE.md` for detailed model comparisons.
 
 # 🙏 Contributions
 Monocle is an open-source project and welcomes contributions from the community. If you would like to contribute to
