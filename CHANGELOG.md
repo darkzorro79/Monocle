@@ -22,8 +22,11 @@ All notable changes to this project will be documented in this file.
 
 - **Improved Ghidra Integration**
   - Better error messages when Ghidra not found
-  - Clear prompt for `analyzeHeadless.bat` path
+  - Clear prompt for `analyzeHeadless` path
   - Pre-check before starting analysis
+  - Cross-platform support (Windows/Linux/macOS)
+  - Automatic `JAVA_HOME` detection when not set
+  - `stdin=DEVNULL` to prevent hanging on non-interactive runs
 
 - **RTX 5090 Support**
   - Automatic GPU compatibility detection

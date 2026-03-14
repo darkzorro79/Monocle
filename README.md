@@ -28,7 +28,7 @@ Monocle is tooling backed by a large language model for performing natural langu
 ## System Requirements
 Monocle uses the Mistral-7B-Instruct-v0.2 model, and where possible offloads processing to your system's GPU. It is recommended to run Monocle on a machine with a minimum of 16GB of RAM and a dedicated Nvidia GPU with at least 4GB of memory. **However,** it can run on lower spec machines, but will be significantly slower.
 
-**Monocle has been tested on Windows 11; however, it should be compatible with Unix and other systems.**
+**Monocle supports Windows, Linux, and macOS.** Tested on Windows 11 and Linux Mint 22.
 
 ## Dependencies
 Monocle requires **Nvidia CUDA** which allows for greatly increased performance of the LLM. For this follow the below steps:
@@ -40,7 +40,7 @@ Monocle requires **Nvidia CUDA** which allows for greatly increased performance 
   ```
 - Validate CUDA is installed correctly by running the following and being returned a prompt ```python -c "import torch; print(torch.rand(2,3).cuda())"```
 
-Monocle requires [Ghidra](https://ghidra-sre.org/) to be installed and accessible. Additionally, ensure that `analyzeHeadless` is available in your environment. 
+Monocle requires [Ghidra](https://ghidra-sre.org/) and a **JDK** (not just JRE) to be installed. Ghidra 12.x requires JDK 21+. Ensure that `analyzeHeadless` (Linux/macOS) or `analyzeHeadless.bat` (Windows) is available in your environment, or use the `--ghidra` flag / `GHIDRA_HOME` environment variable.
 
 Python dependencies can be found in the `requirements.txt` file:
 

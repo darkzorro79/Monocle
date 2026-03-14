@@ -1,6 +1,7 @@
 import concurrent
 import hashlib
 import os
+import platform
 import shutil
 import subprocess
 import tempfile
@@ -14,8 +15,27 @@ class GhidraBridge():
     def __init__(self, ghidra_path=None):
         self.headless_path = self._resolve_ghidra_path(ghidra_path)
 
+    @staticmethod
+    def _headless_binary_name():
+        if platform.system() == "Windows":
+            return "analyzeHeadless.bat"
+        return "analyzeHeadless"
+
+    @staticmethod
+    def _resolve_java_home():
+        java_home = os.environ.get("JAVA_HOME")
+        if java_home and Path(java_home).is_dir():
+            return java_home
+        java_bin = shutil.which("java")
+        if java_bin:
+            real_path = Path(java_bin).resolve()
+            candidate = real_path.parent.parent
+            if (candidate / "bin" / "java").exists():
+                return str(candidate)
+        return None
+
     def _resolve_ghidra_path(self, ghidra_path=None):
-        binary_name = "analyzeHeadless.bat"
+        binary_name = self._headless_binary_name()
 
         if ghidra_path:
             p = Path(ghidra_path)
@@ -42,10 +62,19 @@ class GhidraBridge():
         if command_as_list is None:
             return None
         str_command = [str(arg) for arg in command_as_list]
+
+        env = os.environ.copy()
+        if "JAVA_HOME" not in env:
+            java_home = self._resolve_java_home()
+            if java_home:
+                env["JAVA_HOME"] = java_home
+
         result = subprocess.run(
             str_command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
+            env=env,
         )
         stdout_text = result.stdout.decode("utf-8", errors="replace").strip()
         stderr_text = result.stderr.decode("utf-8", errors="replace").strip()
@@ -124,14 +153,18 @@ public class DecomScript extends GhidraScript {
         temp_script_dir = temp_script_path.parent
 
         if headless is None:
+            binary_name = self._headless_binary_name()
             print("\n" + "="*60)
-            print("⚠ analyzeHeadless.bat not found")
+            print(f"⚠ {binary_name} not found")
             print("="*60)
             print("\nOptions:")
             print("  1. Set GHIDRA_HOME environment variable:")
-            print("     set GHIDRA_HOME=C:\\Crack_programm\\ghidra_12.0.4")
+            if platform.system() == "Windows":
+                print("     set GHIDRA_HOME=C:\\path\\to\\ghidra")
+            else:
+                print("     export GHIDRA_HOME=/path/to/ghidra")
             print("  2. Use --ghidra argument:")
-            print("     monocle --ghidra C:\\Crack_programm\\ghidra_12.0.4 ...")
+            print("     monocle --ghidra /path/to/ghidra ...")
             print("  3. Enter path now:")
             print("-"*60)
             user_provided_path = input("Path: ").strip('"').strip("'")
@@ -140,7 +173,7 @@ public class DecomScript extends GhidraScript {
                 headless = user_provided_path
                 self.headless_path = headless
             else:
-                raise FileNotFoundError(f"analyzeHeadless.bat not found at: {user_provided_path}")
+                raise FileNotFoundError(f"{binary_name} not found at: {user_provided_path}")
 
         with tempfile.TemporaryDirectory() as ghidra_project_dir:
             commandStr = [
