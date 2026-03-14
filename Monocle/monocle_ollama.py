@@ -21,9 +21,9 @@ class MonocleOllama:
         with open(path_to_file, "r") as file:
             return file.read()
     
-    def _decompile_binary(self, decom_folder, binary):
+    def _decompile_binary(self, decom_folder, binary, ghidra_path=None):
         """Decompile the binary file and extract function information."""
-        g_bridge = GhidraBridge()
+        g_bridge = GhidraBridge(ghidra_path=ghidra_path)
         g_bridge.decompile_binaries_functions(binary, decom_folder)
         
         list_of_decom_files = []
@@ -34,6 +34,7 @@ class MonocleOllama:
                 "function_name": function_name,
                 "code": self._get_code_from_decom_file(file_path)
             })
+        self._last_ghidra_output = getattr(g_bridge, 'last_stdout', '')
         return list_of_decom_files
     
     def _generate_dialogue_response(self, model, messages, language="English"):
@@ -109,6 +110,8 @@ class MonocleOllama:
         parser.add_argument("--ollama-host",
                           default="http://localhost:11434",
                           help="Ollama server address (default: http://localhost:11434)")
+        parser.add_argument("--ghidra", "-g",
+                          help="Path to Ghidra installation (or set GHIDRA_HOME env variable)")
         return parser.parse_args()
     
     def entry(self):
@@ -133,27 +136,44 @@ class MonocleOllama:
             console.print(f"Error: {str(e)}")
             return
         
-        # Check for Ghidra
-        console.print("[cyan]Checking for Ghidra...[/cyan]")
-        import shutil
-        if shutil.which("analyzeHeadless.bat") is None:
-            console.print("[yellow]⚠ Ghidra not found in PATH[/yellow]")
-            console.print("Please provide the full path to analyzeHeadless.bat")
-            console.print("Example: C:\\ghidra_11.2_PUBLIC\\support\\analyzeHeadless.bat")
-            console.print("\nOr download Ghidra from: https://ghidra-sre.org/")
-            console.print("And add it to PATH, then restart.\n")
-        else:
-            console.print("[green]✓[/green] Ghidra found\n")
+        try:
+            ghidra_test = GhidraBridge(ghidra_path=args.ghidra)
+            if ghidra_test.headless_path:
+                console.print(f"[green]✓[/green] Ghidra found: {ghidra_test.headless_path}\n")
+            else:
+                console.print("[yellow]⚠ Ghidra not found in PATH or GHIDRA_HOME[/yellow]")
+                console.print("[yellow]  You will be prompted for the path during analysis.[/yellow]")
+                console.print("[yellow]  Tip: use --ghidra or set GHIDRA_HOME to avoid this.\n[/yellow]")
+        except FileNotFoundError as e:
+            console.print(f"[bold red]Error:[/bold red] {e}")
+            return
         
         console.print("[yellow]Starting analysis...[/yellow]\n")
         
         list_of_decom_files = []
         with tempfile.TemporaryDirectory() as tmpdirname:
-            with console.status("[bold green]Decompiling binary...") as status:
-                list_of_decom_files = self._decompile_binary(tmpdirname, args.binary)
-                console.print("[bold green]Decompilation finished!")
-                console.clear()
-            
+            with console.status("[bold green]Decompiling binary..."):
+                try:
+                    list_of_decom_files = self._decompile_binary(tmpdirname, args.binary, ghidra_path=args.ghidra)
+                except RuntimeError as e:
+                    console.print(f"[bold red]Ghidra error:[/bold red] {e}")
+                    return
+
+            if not list_of_decom_files:
+                console.print("[bold red]Error:[/bold red] No functions were decompiled from the binary.")
+                console.print("[yellow]Possible causes:[/yellow]")
+                console.print("  - Binary format is not supported by Ghidra")
+                console.print("  - Ghidra failed to analyze the binary")
+                console.print("  - Binary is packed or obfuscated\n")
+                ghidra_log = getattr(self, '_last_ghidra_output', '')
+                if ghidra_log:
+                    last_lines = "\n".join(ghidra_log.splitlines()[-30:])
+                    console.print("[dim]--- Ghidra output (last 30 lines) ---[/dim]")
+                    console.print(f"[dim]{last_lines}[/dim]")
+                return
+
+            console.print(f"[green]✓[/green] Decompiled [bold]{len(list_of_decom_files)}[/bold] functions\n")
+
             with Live(Table(), refresh_per_second=4, console=console) as live:
                 rows = []
                 
@@ -185,13 +205,15 @@ Code:
                         [{"role": "user", "content": question}],
                         args.language
                     )
-                    
+
+                    # Strip <think>...</think> blocks (Qwen3 reasoning)
+                    result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
+
                     # Parse result
                     lines = result.strip().split("\n")
                     ans_number = lines[0].strip() if lines else "0"
                     explanation = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
-                    
-                    # Extract score number (handle formats like "3:", "Score: 3", "3", etc.)
+
                     score_match = re.search(r'\d+', ans_number)
                     if score_match:
                         score = int(score_match.group())

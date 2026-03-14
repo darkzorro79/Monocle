@@ -32,7 +32,7 @@ env/
 *.swp
 *.swo
 *~
-
+.trunk/
 # OS
 .DS_Store
 Thumbs.db
@@ -47,3 +47,7 @@ coverage/
 *.tmp
 temp/
 tmp/
+
+# pip entry-point stubs (created by editable installs)
+/monocle
+/monocle-ollama

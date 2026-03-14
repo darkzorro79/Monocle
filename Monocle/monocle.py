@@ -77,18 +77,19 @@ class Monocle:
         with open(path_to_file, "r") as file:
             return file.read()
         
-    def _decompile_binary(self, decom_folder, binary):
+    def _decompile_binary(self, decom_folder, binary, ghidra_path=None):
         """
         Decompile the binary file and extract function information.
 
         Args:
             decom_folder (str): Folder to store decompiled files.
             binary (str): Path to the binary file.
+            ghidra_path (str, optional): Path to Ghidra installation.
 
         Returns:
             list: List of dictionaries containing binary name, function name, and code.
         """
-        g_bridge = GhidraBridge()
+        g_bridge = GhidraBridge(ghidra_path=ghidra_path)
         g_bridge.decompile_binaries_functions(binary, decom_folder)
         
         list_of_decom_files = []
@@ -97,6 +98,7 @@ class Monocle:
             binary_name, function_name, *_ = Path(file_path).name.split("__")
             list_of_decom_files.append({"binary_name": binary_name, "function_name": function_name, "code": self._get_code_from_decom_file(file_path)})
 
+        self._last_ghidra_output = getattr(g_bridge, 'last_stdout', '')
         return list_of_decom_files
         
     def _generate_dialogue_response(self, model, tokenizer, device, messages):
@@ -183,6 +185,8 @@ class Monocle:
                           default="English",
                           choices=["English", "Russian"],
                           help="Output language (default: English)")
+        parser.add_argument("--ghidra", "-g",
+                          help="Path to Ghidra installation (or set GHIDRA_HOME env variable)")
         return parser.parse_args()
     
     def _remove_inst_tags(self, text):
@@ -206,20 +210,21 @@ class Monocle:
         args = self._get_args()
         console = Console()
         
-        # Check CUDA compatibility
-        device = "cpu"  # Default to CPU
+        device = "cpu"
         if torch.cuda.is_available():
             try:
-                # Test if GPU actually works
                 test_tensor = torch.rand(2, 2).cuda()
                 _ = test_tensor * 2
                 device = "cuda"
-                console.print(f"[green]✓[/green] Using GPU: {torch.cuda.get_device_name(0)}")
-            except RuntimeError as e:
-                console.print(f"[yellow]⚠ Warning:[/yellow] GPU detected but incompatible with PyTorch")
-                console.print(f"[yellow]  {torch.cuda.get_device_name(0)} (compute capability {torch.cuda.get_device_capability(0)})[/yellow]")
-                console.print(f"[yellow]  Falling back to CPU mode (will be slower)[/yellow]")
-                console.print(f"[yellow]  For GPU support, wait for PyTorch to support your GPU architecture[/yellow]\n")
+                gpu_name = torch.cuda.get_device_name(0)
+                vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                console.print(f"[green]✓[/green] Using GPU: {gpu_name} ({vram_gb:.1f} GB VRAM)")
+            except RuntimeError:
+                cap = torch.cuda.get_device_capability(0)
+                console.print(f"[yellow]⚠ GPU detected but incompatible: {torch.cuda.get_device_name(0)} (sm_{cap[0]}{cap[1]})[/yellow]")
+                console.print("[yellow]  Ensure PyTorch is installed with matching CUDA version:[/yellow]")
+                console.print("[yellow]  pip install torch --index-url https://download.pytorch.org/whl/cu128[/yellow]")
+                console.print("[yellow]  Falling back to CPU mode\n[/yellow]")
         else:
             console.print("[yellow]⚠ No CUDA device found, using CPU (will be slower)[/yellow]\n")
         
@@ -240,17 +245,17 @@ class Monocle:
             console.print(f"Request access to model at: https://huggingface.co/{model_name}")
             return
         
-        # Check for Ghidra before starting (to avoid confusion with spinner)
-        console.print("[cyan]Checking for Ghidra...[/cyan]")
-        import shutil
-        if shutil.which("analyzeHeadless.bat") is None:
-            console.print("[yellow]⚠ Ghidra not found in PATH[/yellow]")
-            console.print("Please provide the full path to analyzeHeadless.bat")
-            console.print("Example: C:\\ghidra_11.2_PUBLIC\\support\\analyzeHeadless.bat")
-            console.print("\nOr download Ghidra from: https://ghidra-sre.org/")
-            console.print("And add it to PATH, then restart.\n")
-        else:
-            console.print("[green]✓[/green] Ghidra found\n")
+        try:
+            ghidra_test = GhidraBridge(ghidra_path=args.ghidra)
+            if ghidra_test.headless_path:
+                console.print(f"[green]✓[/green] Ghidra found: {ghidra_test.headless_path}\n")
+            else:
+                console.print("[yellow]⚠ Ghidra not found in PATH or GHIDRA_HOME[/yellow]")
+                console.print("[yellow]  You will be prompted for the path during analysis.[/yellow]")
+                console.print("[yellow]  Tip: use --ghidra or set GHIDRA_HOME to avoid this.\n[/yellow]")
+        except FileNotFoundError as e:
+            console.print(f"[bold red]Error:[/bold red] {e}")
+            return
         
         if device == "cpu":
             console.print("[yellow]Loading model in CPU mode, this may take several minutes and requires 32GB+ RAM...[/yellow]")
@@ -260,12 +265,27 @@ class Monocle:
         
         list_of_decom_files = []
         with tempfile.TemporaryDirectory() as tmpdirname:
-            with console.status("[bold green]Decompiling binary...") as status:
-                list_of_decom_files = self._decompile_binary(tmpdirname, args.binary)
-                # Spinner will stop spinning after the task is finished
-                console.print("[bold green]Processing finished!")
+            with console.status("[bold green]Decompiling binary..."):
+                try:
+                    list_of_decom_files = self._decompile_binary(tmpdirname, args.binary, ghidra_path=args.ghidra)
+                except RuntimeError as e:
+                    console.print(f"[bold red]Ghidra error:[/bold red] {e}")
+                    return
 
-                console.clear()
+            if not list_of_decom_files:
+                console.print("[bold red]Error:[/bold red] No functions were decompiled from the binary.")
+                console.print("[yellow]Possible causes:[/yellow]")
+                console.print("  - Binary format is not supported by Ghidra")
+                console.print("  - Ghidra failed to analyze the binary")
+                console.print("  - Binary is packed or obfuscated\n")
+                ghidra_log = getattr(self, '_last_ghidra_output', '')
+                if ghidra_log:
+                    last_lines = "\n".join(ghidra_log.splitlines()[-30:])
+                    console.print("[dim]--- Ghidra output (last 30 lines) ---[/dim]")
+                    console.print(f"[dim]{last_lines}[/dim]")
+                return
+
+            console.print(f"[green]✓[/green] Decompiled [bold]{len(list_of_decom_files)}[/bold] functions\n")
 
             with Live(Table(), refresh_per_second=4, console=console) as live:
                 rows = []    

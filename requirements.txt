@@ -7,13 +7,15 @@ pyyaml
 
 # HuggingFace backend (default)
 huggingface_hub
-accelerate>=0.16.0,<1
-transformers[torch]>=4.28.1
-torch>=1.13.1
-bitsandbytes>=0.39.0
+accelerate>=0.26.0
+transformers[torch]>=4.38.0
+torch>=2.7.0
+bitsandbytes>=0.43.0
 
-# Ollama backend (optional, for better GPU support)
+# Ollama backend (optional)
 ollama>=0.1.0
 
-# Note: For CUDA support, install PyTorch with CUDA:
-# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# Note: For CUDA 12.8+ support (required for RTX 5090 / Blackwell):
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+# For older GPUs (RTX 30xx/40xx) CUDA 12.4 also works:
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124

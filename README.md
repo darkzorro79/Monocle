@@ -19,7 +19,8 @@ Monocle is tooling backed by a large language model for performing natural langu
 * **🔬 Binary Search:** Without any prior knowledge, Monocle will support in answering binary analysis questions related to the target.
 * **🤖 Natural Language and Open-Ended Questions:** As Monocle is backed by an LLM queries passed to it are written in plain text.
 * **🛠️ Ghidra Enabled:** Monocle uses Ghidra headless to enable decompilation of compiled binaries!
-* **🚀 Ollama Support:** NEW! Use Ollama for GPU acceleration on modern hardware (RTX 5090, RTX 4090, etc.)
+* **🚀 GPU Acceleration:** Full support for RTX 5090 (Blackwell), RTX 4090, and other NVIDIA GPUs
+* **🔌 Ollama Support:** Use Ollama backend for simplified model management
 * **🌍 Multi-Language:** Support for English and Russian output
 
 # ⚙️ Setup
@@ -32,7 +33,11 @@ Monocle uses the Mistral-7B-Instruct-v0.2 model, and where possible offloads pro
 ## Dependencies
 Monocle requires **Nvidia CUDA** which allows for greatly increased performance of the LLM. For this follow the below steps:
 - Ensure your Nvidia drivers are up to date: https://www.nvidia.com/en-us/geforce/drivers/
-- Install the appropriate dependancies from here: https://pytorch.org/get-started/locally/
+- Install the appropriate dependencies from here: https://pytorch.org/get-started/locally/
+- **For RTX 5090 / Blackwell GPUs:** install PyTorch with CUDA 12.8:
+  ```
+  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+  ```
 - Validate CUDA is installed correctly by running the following and being returned a prompt ```python -c "import torch; print(torch.rand(2,3).cuda())"```
 
 Monocle requires [Ghidra](https://ghidra-sre.org/) to be installed and accessible. Additionally, ensure that `analyzeHeadless` is available in your environment. 
@@ -49,9 +54,9 @@ Monocle can then be installed using the `./setup.py` script as below:
 python -m pip install .
 ```
 
-### Alternative: Ollama Setup (Recommended for RTX 5090 and modern GPUs)
+### Alternative: Ollama Setup
 
-For better GPU support, especially on newer GPUs like RTX 5090, you can use the Ollama backend:
+You can also use the Ollama backend for simplified model management:
 
 1. Install Ollama: https://ollama.com/download
 2. Pull a model: `ollama pull qwen2.5-coder:14b`
@@ -86,6 +91,7 @@ monocle-ollama --binary <path-to-binary> --find <component-to-find> --language R
 - `--model` / `-m`: Choose a different model
 - `--language` / `-l`: Output language (English/Russian)
 - `--token` / `-t`: HuggingFace authentication token
+- `--ghidra` / `-g`: Path to Ghidra installation (or set `GHIDRA_HOME` env variable)
 - `--ollama-host`: Ollama server address (for monocle-ollama)
 ### Output
 As Monocle processes the functions present in the provided binary, it keeps a live tracker, sorted by the highest score, of all analyzed functions, their score between 0 and 10 (where 0 means the function does not meet the search criteria and 10 means it does), alongside an explanation of why the score was awarded. Scores of 0 do not have their explanation provided.

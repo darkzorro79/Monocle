@@ -1,5 +1,6 @@
 import concurrent
 import hashlib
+import os
 import shutil
 import subprocess
 import tempfile
@@ -10,82 +11,100 @@ from tqdm import tqdm
 
 
 class GhidraBridge():
-    def __init__(self):
-        pass
+    def __init__(self, ghidra_path=None):
+        self.headless_path = self._resolve_ghidra_path(ghidra_path)
+
+    def _resolve_ghidra_path(self, ghidra_path=None):
+        binary_name = "analyzeHeadless.bat"
+
+        if ghidra_path:
+            p = Path(ghidra_path)
+            if p.is_file() and p.exists():
+                return str(p)
+            candidate = p / "support" / binary_name
+            if candidate.exists():
+                return str(candidate)
+            raise FileNotFoundError(f"Ghidra not found at: {ghidra_path}")
+
+        env_home = os.environ.get("GHIDRA_HOME")
+        if env_home:
+            candidate = Path(env_home) / "support" / binary_name
+            if candidate.exists():
+                return str(candidate)
+
+        on_path = shutil.which(binary_name)
+        if on_path:
+            return on_path
+
+        return None
 
     def _execute_blocking_command(self, command_as_list):
-        if command_as_list != None:
-            #print("Executing command: {}".format(command_as_list))
-            result = subprocess.run(command_as_list, capture_output=False, stdout=subprocess.PIPE)
-            return result
+        if command_as_list is None:
+            return None
+        str_command = [str(arg) for arg in command_as_list]
+        result = subprocess.run(
+            str_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        stdout_text = result.stdout.decode("utf-8", errors="replace").strip()
+        stderr_text = result.stderr.decode("utf-8", errors="replace").strip()
+        if result.returncode != 0:
+            error_detail = stderr_text or stdout_text or "(no output)"
+            raise RuntimeError(
+                f"Ghidra exited with code {result.returncode}:\n{error_detail}"
+            )
+        self.last_stdout = stdout_text
+        self.last_stderr = stderr_text
+        return result
 
     def generate_ghidra_decom_script(self, path_to_save_decoms_to, file_to_save_script_to):
+        escaped_path = path_to_save_decoms_to.replace("\\", "\\\\")
 
-        script = """# SaveFunctions.py
-        
-# Import necessary Ghidra modules
-from ghidra.program.model.listing import Function
-from ghidra.util.task import TaskMonitor
-from ghidra.app.decompiler import DecompInterface
-import os
-import time
-import re
+        script = """//DecomScript.java
+//@category Monocle
+import ghidra.app.script.GhidraScript;
+import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.FunctionIterator;
+import ghidra.app.decompiler.DecompInterface;
+import ghidra.app.decompiler.DecompileResults;
+import java.io.*;
 
-# Function to save the decompiled C code of a function to a file
-def save_function_c_code(function, output_directory):
-    function_name = function.getName()
-    function_c_code = decompile_function_to_c_code(function)
-    
-    # Create the output directory if it doesn't exist
-    if not os.path.exists(output_directory):
-        os.makedirs(output_directory)
-    
-    # Save the C code to a file
-    current_epoch_time = int(time.time())
+public class DecomScript extends GhidraScript {
+    @Override
+    public void run() throws Exception {
+        String outputDirectory = "<PATH>";
 
-    # Combine the elements to create the file path
-    output_file_path = os.path.join(
-        output_directory,
-        re.sub(r'[^\w\-\.\\/]', '_', "{}__{}__{}.c".format(
-            function.getProgram().getName(),
-            function_name,
-            int(time.time())
-        ))
-    )
+        DecompInterface decompiler = new DecompInterface();
+        decompiler.openProgram(currentProgram);
 
-    with open(output_file_path, 'w') as output_file:
-        output_file.write(function_c_code)
+        File dir = new File(outputDirectory);
+        if (!dir.exists()) dir.mkdirs();
 
-# Function to decompile a function to C code
-def decompile_function_to_c_code(function):
-    decompiler = get_decompiler(function.getProgram())
-    result = decompiler.decompileFunction(function, 0, TaskMonitor.DUMMY)
-    return result.getDecompiledFunction().getC()
+        FunctionIterator functions = currentProgram.getListing().getFunctions(true);
+        while (functions.hasNext()) {
+            Function function = functions.next();
+            String functionName = function.getName();
 
-# Function to get the decompiler for the current program
-def get_decompiler(program):
-    decompiler_options = program.getOptions("Decompiler")
-    decompiler_id = decompiler_options.getString("decompiler", "ghidra")
-    decompiler = DecompInterface()
-    decompiler.openProgram(program)
-    return decompiler
+            DecompileResults results = decompiler.decompileFunction(function, 0, monitor);
+            if (results != null && results.getDecompiledFunction() != null) {
+                String cCode = results.getDecompiledFunction().getC();
 
-# Main function to iterate through all functions and save their C code
-def save_all_functions_to_files():
-    current_program = getCurrentProgram()
-    listing = current_program.getListing()
-    
-    # Specify the output directory
-    output_directory = r"<PATH>"
-    
-    # Iterate through all functions
-    for function in listing.getFunctions(True):
-        function_name = function.getName()
-        save_function_c_code(function, output_directory)
+                String fileName = (currentProgram.getName() + "__" + functionName
+                    + "__" + System.currentTimeMillis() + ".c")
+                    .replaceAll("[^\\\\w\\\\-\\\\.]", "_");
 
-# Run the main function
-save_all_functions_to_files()
-        """.replace("<PATH>", path_to_save_decoms_to)
+                File outputFile = new File(dir, fileName);
+                try (FileWriter writer = new FileWriter(outputFile)) {
+                    writer.write(cCode);
+                }
+            }
+        }
+
+        decompiler.dispose();
+    }
+}
+""".replace("<PATH>", escaped_path)
 
         with open(file_to_save_script_to, "w") as file:
             file.write(script)
@@ -99,50 +118,43 @@ save_all_functions_to_files()
     def _construct_ghidra_headless_command(self, binary_path, script_path, binary_hash,
                                            ghidra_project_dir=Path.cwd().name):
 
-        binary_name = "analyzeHeadless.bat"
-
-        # Check if the binary is on the PATH
-        headless = shutil.which(binary_name)
+        headless = self.headless_path
 
         temp_script_path = Path(script_path)
         temp_script_dir = temp_script_path.parent
-        Path(temp_script_dir).resolve()
-        if headless is not None:
-            pass#print(f"{binary_name} found at: {headless}")
-        else:
-            # Binary not found, prompt user to provide the path
+
+        if headless is None:
             print("\n" + "="*60)
-            print(f"⚠ {binary_name} not found on the PATH")
+            print("⚠ analyzeHeadless.bat not found")
             print("="*60)
-            print("\nPlease enter the FULL path to analyzeHeadless.bat:")
-            print("Example: C:\\ghidra_11.2_PUBLIC\\support\\analyzeHeadless.bat")
-            print("\n(Or press Ctrl+C to cancel)")
+            print("\nOptions:")
+            print("  1. Set GHIDRA_HOME environment variable:")
+            print("     set GHIDRA_HOME=C:\\Crack_programm\\ghidra_12.0.4")
+            print("  2. Use --ghidra argument:")
+            print("     monocle --ghidra C:\\Crack_programm\\ghidra_12.0.4 ...")
+            print("  3. Enter path now:")
             print("-"*60)
             user_provided_path = input("Path: ").strip('"').strip("'")
 
-            # Verify if the provided path is valid
-            if shutil.which(user_provided_path) is not None or Path(user_provided_path).exists():
+            if Path(user_provided_path).exists():
                 headless = user_provided_path
-                print(f"✓ {binary_name} found at: {headless}\n")
-                headless = user_provided_path
+                self.headless_path = headless
             else:
-                raise Exception(f"Error: {binary_name} not found at the provided path: {user_provided_path}")
+                raise FileNotFoundError(f"analyzeHeadless.bat not found at: {user_provided_path}")
 
         with tempfile.TemporaryDirectory() as ghidra_project_dir:
-            # Construct Ghidra headless command
             commandStr = [
-                headless,
-                ghidra_project_dir,
-                binary_hash,
+                str(headless),
+                str(ghidra_project_dir),
+                str(binary_hash),
                 "-import",
-                binary_path,
+                str(binary_path),
                 "-scriptPath",
-                temp_script_dir,
+                str(temp_script_dir),
                 "-postScript",
-                temp_script_path.name
+                str(temp_script_path.name)
             ]
 
-            # Run Ghidra headless command
             self._execute_blocking_command(commandStr)
 
     def _hash_binary(self, binary_path):
@@ -153,8 +165,8 @@ save_all_functions_to_files()
     def decompile_binaries_functions(self, path_to_binary, decom_folder):
         binary_hash = self._hash_binary(path_to_binary)
         with tempfile.TemporaryDirectory() as tmpdirname:
-            script_path = Path(tmpdirname, "decom_script.py").resolve()
-            self.generate_ghidra_decom_script(decom_folder, script_path)
+            script_path = Path(tmpdirname, "DecomScript.java").resolve()
+            self.generate_ghidra_decom_script(str(decom_folder), str(script_path))
             self._construct_ghidra_headless_command(path_to_binary, script_path, binary_hash)
 
     def decompile_all_binaries_in_folder(self, path_to_folder, decom_folder):
