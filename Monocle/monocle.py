@@ -77,7 +77,7 @@ class Monocle:
         with open(path_to_file, "r") as file:
             return file.read()
         
-    def _decompile_binary(self, decom_folder, binary, ghidra_path=None):
+    def _decompile_binary(self, decom_folder, binary, ghidra_path=None, maxmem=None, threads=None):
         """
         Decompile the binary file and extract function information.
 
@@ -85,11 +85,13 @@ class Monocle:
             decom_folder (str): Folder to store decompiled files.
             binary (str): Path to the binary file.
             ghidra_path (str, optional): Path to Ghidra installation.
+            maxmem (str, optional): Max Java heap for Ghidra (e.g. '4G', 'auto').
+            threads (str, optional): Thread count for Ghidra (e.g. '8', 'auto').
 
         Returns:
             list: List of dictionaries containing binary name, function name, and code.
         """
-        g_bridge = GhidraBridge(ghidra_path=ghidra_path)
+        g_bridge = GhidraBridge(ghidra_path=ghidra_path, maxmem=maxmem, threads=threads)
         g_bridge.decompile_binaries_functions(binary, decom_folder)
         
         list_of_decom_files = []
@@ -187,6 +189,12 @@ class Monocle:
                           help="Output language (default: English)")
         parser.add_argument("--ghidra", "-g",
                           help="Path to Ghidra installation (or set GHIDRA_HOME env variable)")
+        parser.add_argument("--maxmem",
+                          default="auto",
+                          help="Max Java heap for Ghidra (default: auto). Examples: 4G, 8G, auto")
+        parser.add_argument("--threads",
+                          default="auto",
+                          help="CPU threads for Ghidra analysis (default: auto). Examples: 4, 8, auto")
         return parser.parse_args()
     
     def _remove_inst_tags(self, text):
@@ -267,7 +275,7 @@ class Monocle:
         with tempfile.TemporaryDirectory() as tmpdirname:
             with console.status("[bold green]Decompiling binary..."):
                 try:
-                    list_of_decom_files = self._decompile_binary(tmpdirname, args.binary, ghidra_path=args.ghidra)
+                    list_of_decom_files = self._decompile_binary(tmpdirname, args.binary, ghidra_path=args.ghidra, maxmem=args.maxmem, threads=args.threads)
                 except RuntimeError as e:
                     console.print(f"[bold red]Ghidra error:[/bold red] {e}")
                     return

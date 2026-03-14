@@ -21,9 +21,9 @@ class MonocleOllama:
         with open(path_to_file, "r") as file:
             return file.read()
     
-    def _decompile_binary(self, decom_folder, binary, ghidra_path=None):
+    def _decompile_binary(self, decom_folder, binary, ghidra_path=None, maxmem=None, threads=None):
         """Decompile the binary file and extract function information."""
-        g_bridge = GhidraBridge(ghidra_path=ghidra_path)
+        g_bridge = GhidraBridge(ghidra_path=ghidra_path, maxmem=maxmem, threads=threads)
         g_bridge.decompile_binaries_functions(binary, decom_folder)
         
         list_of_decom_files = []
@@ -112,6 +112,12 @@ class MonocleOllama:
                           help="Ollama server address (default: http://localhost:11434)")
         parser.add_argument("--ghidra", "-g",
                           help="Path to Ghidra installation (or set GHIDRA_HOME env variable)")
+        parser.add_argument("--maxmem",
+                          default="auto",
+                          help="Max Java heap for Ghidra (default: auto). Examples: 4G, 8G, auto")
+        parser.add_argument("--threads",
+                          default="auto",
+                          help="CPU threads for Ghidra analysis (default: auto). Examples: 4, 8, auto")
         return parser.parse_args()
     
     def entry(self):
@@ -148,13 +154,22 @@ class MonocleOllama:
             console.print(f"[bold red]Error:[/bold red] {e}")
             return
         
+        binary_size_mb = Path(args.binary).stat().st_size / (1024 * 1024)
+        auto_mem = GhidraBridge.auto_maxmem(args.binary)
+        auto_thr = GhidraBridge.auto_threads()
+        eff_mem = auto_mem if args.maxmem == "auto" else args.maxmem
+        eff_thr = auto_thr if args.threads == "auto" else int(args.threads)
+        console.print(f"[cyan]Binary size:[/cyan] {binary_size_mb:.1f} MB")
+        console.print(f"[cyan]Ghidra heap:[/cyan] {eff_mem} ({'auto' if args.maxmem == 'auto' else 'manual'})")
+        console.print(f"[cyan]Ghidra threads:[/cyan] {eff_thr} ({'auto' if args.threads == 'auto' else 'manual'})\n")
+
         console.print("[yellow]Starting analysis...[/yellow]\n")
         
         list_of_decom_files = []
         with tempfile.TemporaryDirectory() as tmpdirname:
             with console.status("[bold green]Decompiling binary..."):
                 try:
-                    list_of_decom_files = self._decompile_binary(tmpdirname, args.binary, ghidra_path=args.ghidra)
+                    list_of_decom_files = self._decompile_binary(tmpdirname, args.binary, ghidra_path=args.ghidra, maxmem=args.maxmem, threads=args.threads)
                 except RuntimeError as e:
                     console.print(f"[bold red]Ghidra error:[/bold red] {e}")
                     return
